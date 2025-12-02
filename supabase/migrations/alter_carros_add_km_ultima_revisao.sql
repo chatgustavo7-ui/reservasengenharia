@@ -1,0 +1,4 @@
+BEGIN;
+ALTER TABLE public.carros ADD COLUMN IF NOT EXISTS km_ultima_revisao INTEGER;
+COMMIT;
+

@@ -1,0 +1,403 @@
+import { useEffect, useState } from "react";
+import { Calendar, User, MapPin, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
+import IBGECityFilter from "@/components/IBGECityFilter";
+import { fetchUFs, UF } from "@/services/ibge";
+import { isoDateToBR } from "@/utils/datetime";
+import BRDateInput from "@/components/BRDateInput";
+import { supabase } from "@/lib/supabase";
+import ConcluirReservaModal from "@/components/ConcluirReservaModal";
+import { concluirReserva } from "@/services/reservas";
+
+interface Reserva {
+  id: number;
+  destinos: string[];
+  ida: string;
+  volta: string;
+  status: 'pendente' | 'concluida' | 'em_viagem';
+  created_at: string;
+  carro_id: number | null;
+}
+
+interface CarroInfo {
+  id: number;
+  placa: string;
+  modelo: string;
+}
+
+interface Pessoa {
+  id: number;
+  nome: string;
+}
+
+interface ReservaPessoa {
+  reserva_id: number;
+  pessoa_id: number;
+  papel: 'condutor' | 'acompanhante';
+}
+
+export default function Reservas() {
+  const [reservas, setReservas] = useState<Reserva[]>([]);
+  const [pessoas, setPessoas] = useState<Pessoa[]>([]);
+  const [reservaPessoas, setReservaPessoas] = useState<ReservaPessoa[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [currentReservaId, setCurrentReservaId] = useState<number | null>(null);
+  const [carros, setCarros] = useState<CarroInfo[]>([]);
+
+  // Filtros
+  const [qCidade, setQCidade] = useState("");
+  const [qUF, setQUF] = useState("");
+  const [qCondutor, setQCondutor] = useState("");
+  const [qCarroId, setQCarroId] = useState<number | null>(null);
+  const [qMes, setQMes] = useState<string>("");
+  const [qDataDe, setQDataDe] = useState<string>("");
+  const [qDataAte, setQDataAte] = useState<string>("");
+  const [ufs, setUfs] = useState<UF[]>([]);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    const loadUFs = async () => {
+      try {
+        const list = await fetchUFs();
+        setUfs(list);
+      } catch {}
+    };
+    loadUFs();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      // Fetch reservas
+      const { data: reservasData, error: reservasError } = await supabase
+        .from('reservas')
+        .select('*')
+        .order('volta', { ascending: false });
+
+      if (reservasError) throw reservasError;
+
+      // Fetch pessoas
+      const { data: pessoasData, error: pessoasError } = await supabase
+        .from('pessoas')
+        .select('*');
+
+      if (pessoasError) throw pessoasError;
+
+      // Fetch reserva_pessoas
+      const { data: reservaPessoasData, error: reservaPessoasError } = await supabase
+        .from('reserva_pessoas')
+        .select('*');
+
+      if (reservaPessoasError) throw reservaPessoasError;
+
+      // Fetch carros
+      const { data: carrosData, error: carrosError } = await supabase
+        .from('carros')
+        .select('id, placa, modelo');
+      if (carrosError) throw carrosError;
+
+      setReservas(reservasData || []);
+      setPessoas(pessoasData || []);
+      setReservaPessoas(reservaPessoasData || []);
+      setCarros((carrosData || []) as CarroInfo[]);
+    } catch (error) {
+      console.error('Erro ao buscar dados:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openConcluir = (id: number) => {
+    setCurrentReservaId(id);
+    setModalOpen(true);
+  };
+
+  const handleConcluir = async (payload: { carroId?: number; kmAtual?: number; tanqueFracao?: 1|2|3|4 }) => {
+    if (!currentReservaId) return;
+    await concluirReserva({
+      reservaId: currentReservaId,
+      carroId: payload.carroId,
+      kmAtual: payload.kmAtual,
+      tanqueFracao: payload.tanqueFracao,
+    });
+    setModalOpen(false);
+    setCurrentReservaId(null);
+    await fetchData();
+  };
+
+  const getCondutorNome = (reservaId: number) => {
+    const rp = reservaPessoas.find(r => r.reserva_id === reservaId && r.papel === 'condutor');
+    const p = pessoas.find(px => px.id === rp?.pessoa_id);
+    return p?.nome || '';
+  };
+
+  const filtered = reservas.filter((r) => {
+    // Cidade
+    if (qCidade && !r.destinos.some(d => d.toLowerCase().includes(qCidade.toLowerCase()))) return false;
+    // UF
+    if (qUF) {
+      const okUF = r.destinos.some(d => d.endsWith(` - ${qUF.toUpperCase()}`) || d.toLowerCase().includes(` - ${qUF.toLowerCase()}`));
+      if (!okUF) return false;
+    }
+    // Condutor
+    if (qCondutor) {
+      const nome = getCondutorNome(r.id);
+      if (!nome.toLowerCase().includes(qCondutor.toLowerCase())) return false;
+    }
+    // Carro
+    if (qCarroId && r.carro_id !== qCarroId) return false;
+    // Mês
+    if (qMes) {
+      const m = Number(qMes);
+      const mIda = new Date(r.ida).getMonth() + 1;
+      const mVolta = new Date(r.volta).getMonth() + 1;
+      if (mIda !== m && mVolta !== m) return false;
+    }
+    // Data range
+    if (qDataDe) {
+      const deISO = qDataDe.includes('/') ? `${qDataDe.split('/')[2]}-${qDataDe.split('/')[1]}-${qDataDe.split('/')[0]}` : qDataDe;
+      const de = new Date(deISO);
+      const ida = new Date(r.ida);
+      if (ida < de) return false;
+    }
+    if (qDataAte) {
+      const ateISO = qDataAte.includes('/') ? `${qDataAte.split('/')[2]}-${qDataAte.split('/')[1]}-${qDataAte.split('/')[0]}` : qDataAte;
+      const ate = new Date(ateISO);
+      const volta = new Date(r.volta);
+      if (volta > ate) return false;
+    }
+    return true;
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'concluida':
+        return 'text-green-600 bg-green-100';
+      case 'em_viagem':
+        return 'text-blue-600 bg-blue-100';
+      case 'pendente':
+        return 'text-yellow-600 bg-yellow-100';
+      default:
+        return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'concluida':
+        return <CheckCircle className="w-4 h-4 text-green-600" />;
+      case 'em_viagem':
+        return <Clock className="w-4 h-4 text-blue-600" />;
+      case 'pendente':
+        return <Clock className="w-4 h-4 text-yellow-600" />;
+      default:
+        return <XCircle className="w-4 h-4 text-gray-600" />;
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'concluida':
+        return 'Concluída';
+      case 'em_viagem':
+        return 'Em Viagem';
+      case 'pendente':
+        return 'Pendente';
+      default:
+        return 'Desconhecido';
+    }
+  };
+
+  const getPessoasByReserva = (reservaId: number) => {
+    const pessoasDaReserva = reservaPessoas
+      .filter(rp => rp.reserva_id === reservaId)
+      .map(rp => {
+        const pessoa = pessoas.find(p => p.id === rp.pessoa_id);
+        return {
+          nome: pessoa?.nome || 'Desconhecido',
+          papel: rp.papel
+        };
+      });
+    
+    return pessoasDaReserva;
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Reservas</h1>
+            <p className="text-gray-600">Visualize reservas de veículos</p>
+          </div>
+          <div className="text-center py-8">
+            <div className="animate-pulse text-gray-500">Carregando...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-4xl mx-auto px-4">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Reservas</h1>
+          <p className="text-gray-600">Visualize reservas de veículos</p>
+          <div className="mt-4">
+            <Link to="/" className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Voltar à tela principal</Link>
+          </div>
+        </div>
+
+        {/* Filtros */}
+        <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
+          <div className="grid md:grid-cols-3 gap-3">
+            <IBGECityFilter onPick={(city, uf) => { setQCidade(city); setQUF(uf); }} />
+            <select value={qUF} onChange={(e) => setQUF(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="">Estado (UF)</option>
+              {ufs.map(u => (<option key={u.id} value={u.sigla}>{u.nome} ({u.sigla})</option>))}
+            </select>
+            <select value={qCondutor} onChange={(e) => setQCondutor(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="">Condutor</option>
+              {pessoas.map(p => (<option key={p.id} value={p.nome}>{p.nome}</option>))}
+            </select>
+            <select value={qCarroId ?? ''} onChange={(e) => setQCarroId(e.target.value ? Number(e.target.value) : null)} className="px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="">Carro</option>
+              {carros.map(c => (<option key={c.id} value={c.id}>{c.modelo} ({c.placa})</option>))}
+            </select>
+            <select value={qMes} onChange={(e) => setQMes(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="">Mês</option>
+              {[...Array(12)].map((_,i)=> <option key={i+1} value={i+1}>{String(i+1).padStart(2,'0')}</option>)}
+            </select>
+            {/* Data de (formato BR) */}
+            <div>
+              <BRDateInput value={qDataDe} onChange={setQDataDe} placeholder="Data de (dd/mm/aaaa)" required={false} />
+            </div>
+            {/* Data até (formato BR) */}
+            <div>
+              <BRDateInput value={qDataAte} onChange={setQDataAte} placeholder="Data até (dd/mm/aaaa)" required={false} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <button type="button" onClick={() => { setQCidade(''); setQUF(''); setQCondutor(''); setQCarroId(null); setQMes(''); setQDataDe(''); setQDataAte(''); }} className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm">Limpar filtros</button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {filtered.map((reserva) => {
+            const pessoasReserva = getPessoasByReserva(reserva.id);
+            const condutor = pessoasReserva.find(p => p.papel === 'condutor');
+            const acompanhantes = pessoasReserva.filter(p => p.papel === 'acompanhante');
+            const carro = carros.find(c => c.id === (reserva.carro_id ?? -1));
+
+            return (
+              <div key={reserva.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-6">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {getStatusIcon(reserva.status)}
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(reserva.status)}`}>
+                      {getStatusText(reserva.status)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <div>
+                      <div className="text-sm text-gray-600">Data de Ida</div>
+                      <div className="font-medium">{isoDateToBR(reserva.ida)}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <div>
+                      <div className="text-sm text-gray-600">Data de Volta</div>
+                      <div className="font-medium">{isoDateToBR(reserva.volta)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {reserva.destinos && reserva.destinos.length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <MapPin className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm text-gray-600">Destinos</span>
+                    </div>
+                    <div className="text-sm text-gray-900">
+                      {reserva.destinos.join(', ')}
+                    </div>
+                  </div>
+                )}
+
+                {carro && (
+                  <div className="mb-2 text-sm">
+                    <span className="font-medium">Carro:</span> {carro.modelo} ({carro.placa})
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {condutor && (
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">
+                        <span className="font-medium">Condutor:</span> {condutor.nome}
+                      </span>
+                    </div>
+                  )}
+
+                  {acompanhantes.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">
+                        <span className="font-medium">Acompanhantes:</span> {acompanhantes.map(p => p.nome).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {reserva.status !== 'concluida' && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => openConcluir(reserva.id)}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                    >
+                      Concluir viagem
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {reservas.length === 0 && (
+          <div className="text-center py-12">
+            <Calendar className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Nenhuma reserva encontrada
+            </h3>
+            <p className="text-gray-600">
+              Não há reservas cadastradas no sistema.
+            </p>
+          </div>
+        )}
+      </div>
+      <ConcluirReservaModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onConfirm={handleConcluir}
+        carInfo={(() => {
+          const r = reservas.find(rx => rx.id === currentReservaId);
+          const c = carros.find(cx => cx.id === (r?.carro_id ?? -1));
+          return c ? { id: c.id, placa: c.placa, modelo: c.modelo } : null;
+        })()}
+      />
+    </div>
+  );
+}
