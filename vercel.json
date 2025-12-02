@@ -1,7 +1,7 @@
 {
-  "buildCommand": "pnpm run build",
+  "buildCommand": "corepack prepare pnpm@8.15.4 --activate && pnpm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "installCommand": "pnpm install",
+  "installCommand": "corepack prepare pnpm@8.15.4 --activate && pnpm install --no-frozen-lockfile",
   "env": {}
 }

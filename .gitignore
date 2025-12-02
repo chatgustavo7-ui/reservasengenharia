@@ -4,6 +4,4 @@ dist/
 .vercel/
 .DS_Store
 coverage/
-pnpm-lock.yaml
 *.local
-
