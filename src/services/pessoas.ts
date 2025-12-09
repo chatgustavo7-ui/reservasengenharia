@@ -13,4 +13,3 @@ export async function listPessoas(): Promise<Pessoa[]> {
   if (error) throw error;
   return (data || []) as Pessoa[];
 }
-

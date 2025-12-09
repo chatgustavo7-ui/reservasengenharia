@@ -113,3 +113,23 @@ export async function concluirReserva(input: ConcluirReservaInput): Promise<void
   }
 }
 
+export interface UpdateReservaInput {
+  id: number;
+  carroId?: number | null;
+  ida?: string;   // YYYY-MM-DD
+  volta?: string; // YYYY-MM-DD
+}
+
+export async function updateReserva(input: UpdateReservaInput): Promise<void> {
+  const changes: Partial<{ carro_id: number | null; ida: string; volta: string }> = {};
+  if (input.carroId !== undefined) changes.carro_id = input.carroId;
+  if (typeof input.ida === 'string') changes.ida = input.ida;
+  if (typeof input.volta === 'string') changes.volta = input.volta;
+  if (Object.keys(changes).length === 0) return;
+  const { error } = await supabase
+    .from('reservas')
+    .update(changes)
+    .eq('id', input.id);
+  if (error) throw error;
+}
+

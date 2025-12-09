@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
-import { Calendar, User, MapPin, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Calendar, User, MapPin, Clock, CheckCircle, XCircle, Settings } from "lucide-react";
 import { Link } from "react-router-dom";
 import IBGECityFilter from "@/components/IBGECityFilter";
 import { fetchUFs, UF } from "@/services/ibge";
 import { isoDateToBR } from "@/utils/datetime";
 import BRDateInput from "@/components/BRDateInput";
 import { supabase } from "@/lib/supabase";
-import ConcluirReservaModal from "@/components/ConcluirReservaModal";
-import { concluirReserva } from "@/services/reservas";
 
 interface Reserva {
   id: number;
@@ -41,9 +39,9 @@ export default function Reservas() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [reservaPessoas, setReservaPessoas] = useState<ReservaPessoa[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [currentReservaId, setCurrentReservaId] = useState<number | null>(null);
   const [carros, setCarros] = useState<CarroInfo[]>([]);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editReservaId, setEditReservaId] = useState<number | null>(null);
 
   // Filtros
   const [qCidade, setQCidade] = useState("");
@@ -79,6 +77,28 @@ export default function Reservas() {
 
       if (reservasError) throw reservasError;
 
+      // Atualiza status automaticamente: pendente até a data de volta, depois concluída
+      const hoje = new Date();
+      const yyyy = hoje.getFullYear();
+      const mm = String(hoje.getMonth() + 1).padStart(2, '0');
+      const dd = String(hoje.getDate()).padStart(2, '0');
+      const isoHoje = `${yyyy}-${mm}-${dd}`;
+      const toConcludeIds: number[] = [];
+      const reservasAjustadas = (reservasData || []).map((r) => {
+        const due = new Date(r.volta) <= new Date(isoHoje);
+        if (due && r.status !== 'concluida') {
+          toConcludeIds.push(r.id);
+          return { ...r, status: 'concluida' };
+        }
+        return r;
+      });
+      if (toConcludeIds.length > 0) {
+        await supabase
+          .from('reservas')
+          .update({ status: 'concluida' })
+          .in('id', toConcludeIds);
+      }
+
       // Fetch pessoas
       const { data: pessoasData, error: pessoasError } = await supabase
         .from('pessoas')
@@ -99,7 +119,7 @@ export default function Reservas() {
         .select('id, placa, modelo');
       if (carrosError) throw carrosError;
 
-      setReservas(reservasData || []);
+      setReservas(reservasAjustadas || []);
       setPessoas(pessoasData || []);
       setReservaPessoas(reservaPessoasData || []);
       setCarros((carrosData || []) as CarroInfo[]);
@@ -110,23 +130,7 @@ export default function Reservas() {
     }
   };
 
-  const openConcluir = (id: number) => {
-    setCurrentReservaId(id);
-    setModalOpen(true);
-  };
-
-  const handleConcluir = async (payload: { carroId?: number; kmAtual?: number; tanqueFracao?: 1|2|3|4 }) => {
-    if (!currentReservaId) return;
-    await concluirReserva({
-      reservaId: currentReservaId,
-      carroId: payload.carroId,
-      kmAtual: payload.kmAtual,
-      tanqueFracao: payload.tanqueFracao,
-    });
-    setModalOpen(false);
-    setCurrentReservaId(null);
-    await fetchData();
-  };
+  
 
   const getCondutorNome = (reservaId: number) => {
     const rp = reservaPessoas.find(r => r.reserva_id === reservaId && r.papel === 'condutor');
@@ -251,7 +255,6 @@ export default function Reservas() {
             <Link to="/" className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Voltar à tela principal</Link>
           </div>
         </div>
-
         {/* Filtros */}
         <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
           <div className="grid md:grid-cols-3 gap-3">
@@ -302,6 +305,14 @@ export default function Reservas() {
                       {getStatusText(reserva.status)}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => { setEditReservaId(reserva.id); setEditOpen(true); }}
+                    title="Editar reserva"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-gray-600 hover:text-gray-800"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -360,17 +371,7 @@ export default function Reservas() {
                   )}
                 </div>
 
-                {reserva.status !== 'concluida' && (
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() => openConcluir(reserva.id)}
-                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                    >
-                      Concluir viagem
-                    </button>
-                  </div>
-                )}
+                
               </div>
             );
           })}
@@ -388,16 +389,25 @@ export default function Reservas() {
           </div>
         )}
       </div>
-      <ConcluirReservaModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onConfirm={handleConcluir}
-        carInfo={(() => {
-          const r = reservas.find(rx => rx.id === currentReservaId);
-          const c = carros.find(cx => cx.id === (r?.carro_id ?? -1));
-          return c ? { id: c.id, placa: c.placa, modelo: c.modelo } : null;
+      <EditReservaModal
+        open={editOpen}
+        onClose={() => { setEditOpen(false); setEditReservaId(null); }}
+        carros={carros}
+        initial={(() => {
+          const r = reservas.find(rx => rx.id === editReservaId);
+          if (!r) return null;
+          return { carroId: r.carro_id, idaISO: r.ida, voltaISO: r.volta };
         })()}
+        onConfirm={async ({ carroId, idaISO, voltaISO }) => {
+          if (!editReservaId) return;
+          await updateReserva({ id: editReservaId, carroId: carroId ?? null, ida: idaISO, volta: voltaISO });
+          setEditOpen(false);
+          setEditReservaId(null);
+          await fetchData();
+        }}
       />
     </div>
   );
 }
+import EditReservaModal from "@/components/EditReservaModal";
+import { updateReserva } from "@/services/reservas";
