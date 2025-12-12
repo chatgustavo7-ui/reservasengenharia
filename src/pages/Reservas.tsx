@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Calendar, User, MapPin, Clock, CheckCircle, XCircle, Settings } from "lucide-react";
+import { Calendar, User, MapPin, Clock, CheckCircle, XCircle, Settings, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import IBGECityFilter from "@/components/IBGECityFilter";
 import { fetchUFs, UF } from "@/services/ibge";
@@ -12,7 +12,7 @@ interface Reserva {
   destinos: string[];
   ida: string;
   volta: string;
-  status: 'pendente' | 'concluida' | 'em_viagem';
+  status: 'pendente' | 'concluida' | 'em_viagem' | 'cancelada';
   created_at: string;
   carro_id: number | null;
 }
@@ -77,15 +77,17 @@ export default function Reservas() {
 
       if (reservasError) throw reservasError;
 
-      // Atualiza status automaticamente: pendente até a data de volta, depois concluída
-      const hoje = new Date();
-      const yyyy = hoje.getFullYear();
-      const mm = String(hoje.getMonth() + 1).padStart(2, '0');
-      const dd = String(hoje.getDate()).padStart(2, '0');
-      const isoHoje = `${yyyy}-${mm}-${dd}`;
+      // Atualiza status automaticamente: pendente até as 18:00 (BRT) da data de volta
       const toConcludeIds: number[] = [];
       const reservasAjustadas = (reservasData || []).map((r) => {
-        const due = new Date(r.volta) <= new Date(isoHoje);
+        const [y, mRaw, dRaw] = String(r.volta).split('-');
+        const yN = Number(y);
+        const mN = Number(mRaw);
+        const dN = Number(dRaw);
+        const mStr = String(mN).padStart(2, '0');
+        const dStr = String(dN).padStart(2, '0');
+        const threshold = new Date(`${yN}-${mStr}-${dStr}T18:00:00-03:00`).getTime();
+        const due = Date.now() >= threshold;
         if (due && r.status !== 'concluida') {
           toConcludeIds.push(r.id);
           return { ...r, status: 'concluida' };
@@ -184,6 +186,8 @@ export default function Reservas() {
         return 'text-blue-600 bg-blue-100';
       case 'pendente':
         return 'text-yellow-600 bg-yellow-100';
+      case 'cancelada':
+        return 'text-red-600 bg-red-100';
       default:
         return 'text-gray-600 bg-gray-100';
     }
@@ -197,6 +201,8 @@ export default function Reservas() {
         return <Clock className="w-4 h-4 text-blue-600" />;
       case 'pendente':
         return <Clock className="w-4 h-4 text-yellow-600" />;
+      case 'cancelada':
+        return <XCircle className="w-4 h-4 text-red-600" />;
       default:
         return <XCircle className="w-4 h-4 text-gray-600" />;
     }
@@ -210,6 +216,8 @@ export default function Reservas() {
         return 'Em Viagem';
       case 'pendente':
         return 'Pendente';
+      case 'cancelada':
+        return 'Cancelada';
       default:
         return 'Desconhecido';
     }
@@ -371,7 +379,22 @@ export default function Reservas() {
                   )}
                 </div>
 
-                
+                {reserva.status !== 'cancelada' && (
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!confirm('Confirmar exclusão desta reserva?')) return;
+                        await deleteReserva(reserva.id);
+                        await fetchData();
+                      }}
+                      className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Excluir reserva
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -410,4 +433,4 @@ export default function Reservas() {
   );
 }
 import EditReservaModal from "@/components/EditReservaModal";
-import { updateReserva } from "@/services/reservas";
+import { updateReserva, deleteReserva } from "@/services/reservas";

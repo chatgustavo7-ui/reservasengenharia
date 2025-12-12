@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { getAvailableCar, updateCarro } from "@/services/carros";
 
-export type ReservaStatus = 'pendente' | 'concluida' | 'em_viagem';
+export type ReservaStatus = 'pendente' | 'concluida' | 'em_viagem' | 'cancelada';
 
 export interface NovaReservaInput {
   destinos: string[];
@@ -130,6 +130,22 @@ export async function updateReserva(input: UpdateReservaInput): Promise<void> {
     .from('reservas')
     .update(changes)
     .eq('id', input.id);
+  if (error) throw error;
+}
+
+export async function cancelarReserva(id: number): Promise<void> {
+  const { error } = await supabase
+    .from('reservas')
+    .update({ status: 'cancelada', carro_id: null })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteReserva(id: number): Promise<void> {
+  const { error } = await supabase
+    .from('reservas')
+    .delete()
+    .eq('id', id);
   if (error) throw error;
 }
 

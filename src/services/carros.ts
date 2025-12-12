@@ -50,7 +50,12 @@ export async function getAvailableCar(idaISO: string, voltaISO: string): Promise
     .from('reservas')
     .select('carro_id, ida, volta, status');
   if (rErr) throw rErr;
-  const overlapping = (reservas || []).filter(r => r.carro_id && r.status !== 'concluida' && !(new Date(r.volta) < new Date(idaISO) || new Date(r.ida) > new Date(voltaISO)))
+  const overlapping = (reservas || [])
+    .filter(r => {
+      const blocks = r.status === 'pendente' || r.status === 'em_viagem';
+      const overlaps = !(new Date(r.volta) < new Date(idaISO) || new Date(r.ida) > new Date(voltaISO));
+      return r.carro_id && blocks && overlaps;
+    })
     .map(r => r.carro_id as number);
   const all = await listCarros();
   const free = all.filter(c => !overlapping.includes(c.id));
