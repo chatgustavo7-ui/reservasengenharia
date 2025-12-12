@@ -27,10 +27,12 @@ export default function IBGECityAutocomplete({ onAdd, placeholder = "Ex: São Pa
   }, []);
 
   const options = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (term.length < 3) return [];
+    const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const termRaw = q.trim().toLowerCase();
+    if (termRaw.length < 3) return [];
+    const term = norm(termRaw);
     return all
-      .filter(c => c.nome.toLowerCase().startsWith(term))
+      .filter(c => norm(c.nome.toLowerCase()).startsWith(term))
       .slice(0, 20);
   }, [q, all]);
 
