@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { getAvailableCar, updateCarro } from "@/services/carros";
+import { getAvailableCar, updateCarro, listCarros } from "@/services/carros";
 
 export type ReservaStatus = 'pendente' | 'concluida' | 'em_viagem' | 'cancelada';
 
@@ -31,6 +31,9 @@ async function ensurePessoa(nome: string): Promise<number> {
 }
 
 export async function criarReserva(input: NovaReservaInput): Promise<{ id: number; carro: { id: number; placa: string; modelo: string } }> {
+  if (new Date(input.volta).getTime() < new Date(input.ida).getTime()) {
+    throw new Error('A data de entrega não pode ser menor que a data de retirada.');
+  }
   const available = await getAvailableCar(input.ida, input.volta);
   if (!available) {
     throw new Error('Sem veículos disponíveis para o período selecionado');
@@ -121,6 +124,52 @@ export interface UpdateReservaInput {
 }
 
 export async function updateReserva(input: UpdateReservaInput): Promise<void> {
+  const { data: current, error: curErr } = await supabase
+    .from('reservas')
+    .select('id, carro_id, ida, volta')
+    .eq('id', input.id)
+    .single();
+  if (curErr) throw curErr;
+  const nextCarroId = input.carroId !== undefined ? input.carroId : (current?.carro_id ?? null);
+  const nextIda = typeof input.ida === 'string' ? input.ida : (current?.ida as string);
+  const nextVolta = typeof input.volta === 'string' ? input.volta : (current?.volta as string);
+  if (new Date(nextVolta).getTime() < new Date(nextIda).getTime()) {
+    throw new Error('A data de entrega não pode ser menor que a data de retirada.');
+  }
+  if (typeof nextCarroId === 'number') {
+    const { data: sameCar, error: scErr } = await supabase
+      .from('reservas')
+      .select('id, ida, volta, status')
+      .eq('carro_id', nextCarroId)
+      .neq('id', input.id)
+      .in('status', ['pendente', 'em_viagem']);
+    if (scErr) throw scErr;
+    const conflict = (sameCar || []).some(r => {
+      const overlaps = !(new Date(r.volta as string) < new Date(nextIda) || new Date(r.ida as string) > new Date(nextVolta));
+      return overlaps;
+    });
+    if (conflict) {
+      throw new Error('Carro selecionado indisponível no período escolhido.');
+    }
+  } else {
+    const { data: reservas, error: rErr } = await supabase
+      .from('reservas')
+      .select('id, carro_id, ida, volta, status');
+    if (rErr) throw rErr;
+    const overlappingBusy = (reservas || [])
+      .filter(r => {
+        if (r.id === input.id) return false;
+        const blocks = r.status === 'pendente' || r.status === 'em_viagem';
+        const overlaps = !(new Date(r.volta as string) < new Date(nextIda) || new Date(r.ida as string) > new Date(nextVolta));
+        return r.carro_id && blocks && overlaps;
+      })
+      .map(r => r.carro_id as number);
+    const allCars = await listCarros();
+    const free = allCars.filter(c => !overlappingBusy.includes(c.id));
+    if (free.length === 0) {
+      throw new Error('Sem veículos disponíveis para o período selecionado.');
+    }
+  }
   const changes: Partial<{ carro_id: number | null; ida: string; volta: string }> = {};
   if (input.carroId !== undefined) changes.carro_id = input.carroId;
   if (typeof input.ida === 'string') changes.ida = input.ida;

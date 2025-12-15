@@ -423,10 +423,23 @@ export default function Reservas() {
         })()}
         onConfirm={async ({ carroId, idaISO, voltaISO }) => {
           if (!editReservaId) return;
-          await updateReserva({ id: editReservaId, carroId: carroId ?? null, ida: idaISO, volta: voltaISO });
-          setEditOpen(false);
-          setEditReservaId(null);
-          await fetchData();
+          try {
+            await updateReserva({ id: editReservaId, carroId: carroId ?? null, ida: idaISO, volta: voltaISO });
+            setEditOpen(false);
+            setEditReservaId(null);
+            await fetchData();
+          } catch (e) {
+            const msg = (e as any)?.message || 'Não foi possível salvar a edição.';
+            if (msg.includes('Sem veículos disponíveis')) {
+              alert('Não é possível salvar: todas as reservas já ocupam esse período e não há carros disponíveis nas datas escolhidas.');
+            } else if (msg.includes('Carro selecionado indisponível')) {
+              alert('O carro selecionado está ocupado no período escolhido. Escolha outro carro ou altere as datas.');
+            } else if (msg.includes('A data de entrega não pode ser menor')) {
+              alert('A data de entrega não pode ser menor que a data de retirada.');
+            } else {
+              alert(msg);
+            }
+          }
         }}
       />
     </div>
